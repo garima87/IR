@@ -1,0 +1,296 @@
+import os
+import sys
+import re
+import operator
+from optparse import OptionParser
+from os import listdir
+from os.path import isfile, join
+from sets import Set
+
+
+"""
+mdict class for storing multiple entries corresponding to a key
+"""
+class mdict(dict):
+  def __setitem__(self, key, value):
+    """add the given value to the list of values for this key"""
+    self.setdefault(key, []).append(value)
+
+"""
+Global dictionary and key to doc name map
+"""
+global_dict = {}
+k_gram = {}
+id_name = {}
+
+
+def tokenize(line):
+    line = line.lower()
+    word_list = re.findall(r"[\w]+", line)
+    return word_list
+
+
+def find_posting_list(keys):
+    query_list = []
+    for key in keys:
+        if key not in global_dict:
+            return None
+        else:
+            query_list.append(global_dict[key])
+    return query_list
+
+def ngrams(tokens, MIN_N, MAX_N):
+    n_tokens = len(tokens)
+    for i in xrange(n_tokens):
+        for j in xrange(i+MIN_N, min(n_tokens, i+MAX_N)+1):
+            yield tokens[i:j]
+
+def build_k_gram():
+    for k in global_dict.iterkeys():
+        key = "$" + k + "$"
+        for i in xrange(len(key)-1):
+            gram = key[0+i:2+i]
+            if gram in k_gram:
+                k_gram[gram].add(k)
+            else:
+                k_gram[gram] = Set([k])
+
+"""
+Function to build global index for the search
+"""
+def build_index(dir_name, file_list):
+    doc_id = 0
+    # Generate the index for each file in the file list
+    for name in file_list:
+        doc_id += 1
+        id_name[doc_id] = name
+        # Append the directory name to the file name
+        file_name = dir_name + "/" + name
+        fh = open(file_name, 'r')
+        count = 0
+        localdict = {}
+        # Process one line at a time and create a local dictionary to the file 
+        for line in fh:
+            word_list = tokenize(line)
+            for word in word_list:
+                if word in localdict:
+                    localdict[word].add(count)
+                else:
+                    localdict[word] = Set([count])
+                count += 1
+    
+        # Merge the local dictionary with the global dictionary
+        for key, value in localdict.iteritems():
+            if key in global_dict:
+                feq, list2 = global_dict[key]
+                posting = doc_id, value
+                list2.append(posting)
+                global_dict[key] = feq+1, list2
+            else:
+                posting = doc_id, value
+                global_dict[key] = 1, [posting] 
+    build_k_gram() 
+
+def merge_docs(doc_list):
+    temp_list = doc_list[0]
+    for docs2 in doc_list[1:]:
+        count1 = 0
+        count2 = 0
+        docs1 = temp_list
+        temp_list = []
+        while count1 < len(docs1) and count2 < len(docs2):
+            doc_id1 = docs1[count1]
+            doc_id2 = docs2[count2]
+            if doc_id1 < doc_id2:
+                count1 += 1
+            elif doc_id2 < doc_id1:
+                count2 += 1
+            else:
+                temp_list.append(doc_id1)
+                count1+=1
+                count2+=1
+    return temp_list
+
+    
+
+"""
+Function to process boolean query
+"""
+def bool_query(query):
+    # Tokenize the query the same way we tokenized documents
+    query_key = tokenize(query)
+
+    # Generate the list of postings corresponding to each keyword 
+    query_list = find_posting_list(query_key)
+
+    if query_list == None: return None
+
+    # Sort the generated postings according to their frequency to increase efficiency
+    query_list.sort(key=lambda tup: tup[0])
+
+    temp_list = query_list[0]
+    if len(query_key) == 1:
+        freq1, ret_value = temp_list
+        return zip(*ret_value)[0]
+        
+
+    # Merge all the postings
+    for doc_data in query_list[1:]:
+        freq1, doc_list1 = temp_list
+        freq2, doc_list2 = doc_data
+
+        doc1 = Set(zip(*doc_list1)[0])
+        doc2 = Set(zip(*doc_list2)[0])
+        
+        com_docs = doc1.intersection(doc2)
+        temp_list = freq2, com_docs
+    freq, ret_value = temp_list
+    print ret_value
+    return ret_value
+
+
+def search_phrase(phrase):
+    query_key = tokenize(phrase)
+    
+    # Generate the list of postings corresponding to each keyword 
+    query_list = {}
+    pos_index = {}
+    count = 0
+    for key in query_key:
+        if key not in global_dict:
+            return None
+        else:
+            query_list[key] = global_dict[key]
+            pos_index[key] = count
+            count += 1
+
+    query_list = sorted(query_list.iteritems(), key=lambda x: operator.itemgetter(1)(x)[0])
+    
+    first_index = 0
+    key, value = query_list[0]
+    first_index = pos_index[key] 
+     
+    freq, temp_list = value
+
+    # Merge all the postings
+    for key, doc_data in query_list[1:]:
+        count1 = 0
+        count2 = 0
+        doc_list = temp_list
+        temp_list = []
+        freq, docs = doc_data
+        diff = pos_index[key] - first_index
+        first_index = pos_index[key]
+        #merge the already existing doc ids with a new keyword
+        while count1 < len(doc_list) and count2 < len(docs):
+            doc_id1, list1 = doc_list[count1]
+            doc_id2, list2 = docs[count2]
+
+            if doc_id1 < doc_id2:
+                count1 += 1
+            elif doc_id2 < doc_id1:
+                count2 += 1
+            else:
+                modified_list = Set(map(lambda x: x+diff, list1))
+                new_list = modified_list.intersection(list2)
+                if new_list:
+                    temp_list.append((doc_id1, new_list))
+                count1+=1
+                count2+=1   
+    doc_list = zip(*temp_list)[0]
+    return doc_list
+
+"""
+Find the documents containing the phrase query
+"""
+def phrase_query(query):
+    # Extract phrases from the input
+    phrases = re.findall(r'\"(.+?)\"', query)
+    doc_list = []
+    for phrase in phrases:
+        doc_list.append(search_phrase(phrase))
+    
+    return merge_docs(doc_list)
+
+def get_file_list(dir_name):
+    file_list = []
+    for (dirpath, dirname, filenames) in os.walk(dir_name):
+        file_list.extend(filenames)
+        break
+    return file_list
+
+def get_matching_words(grams):
+    working_set = k_gram[grams[0]]
+    for gram in grams[1:]:
+        if gram in k_gram:
+             working_set = k_gram[gram].intersection(working_set)
+        else:
+            return None
+    return working_set
+
+def get_grams(query):
+    query = query.lower()
+    original_query = query
+    query = re.sub("^(?!\*)", "$", query)
+    query = re.sub("$(?<!\*)", "$", query)
+    query = query.replace('*','')
+    grams = []
+    for i in xrange(len(query)-1):
+       grams.append(query[0+i:2+i])
+    matches = get_matching_words(grams)
+
+    expr = re.sub("^(?!\*)", "^", original_query)
+    expr = re.sub("$(?<!\*)", "$", expr)
+    expr = expr.replace('*', '.*')
+    
+
+    final_match = []
+    for match in matches:
+        chk_match = re.findall(expr, match)
+        if chk_match:
+            match_str = ''.join(chk_match)
+            final_match.append(match_str)
+    
+    print "words matched are %s" %(final_match)
+    posting_list = find_posting_list(final_match) 
+    for key in final_match:
+        if key in global_dict:
+            posting_list.append(global_dict[key])
+
+    doc_list = Set([])
+    for posting in posting_list:
+       freq, p_list = posting
+       p_list = Set(zip(*p_list)[0])
+       doc_list = doc_list.union(p_list)
+    
+    return doc_list
+
+
+if __name__ == '__main__':
+    """
+    Main function for the code, where the execution starts
+    """
+    #parse command line options 
+    parser = OptionParser()
+
+    parser.add_option("-d", "--directory", action="store", type="string", dest="dir_name")
+    parser.add_option("-b", action="store_true", dest="index")
+    parser.add_option("-f", "--index_file", action="store", type="string", dest="index_file")
+
+
+    (options, args) = parser.parse_args(sys.argv)
+    if options.index:
+        file_list = get_file_list(options.dir_name)
+        build_index(options.dir_name, file_list)
+
+    print "Done with building index.........Enter query"
+    query = raw_input()
+    #final = get_grams(query)
+    final = bool_query(query)
+    for doc_id in final:
+        print "%d %s" %(doc_id, id_name[doc_id])
+    #boolean query
+
+    #final = phrase_query(query)
+    #print "Documents matched are:"
+       

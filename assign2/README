@@ -1,0 +1,16 @@
+1. Sample usage - 
+        To build an index - python build_index.py -i -b -d books/                 //the index is stored in a file named index_file
+        To load an index from an existing file - python build_index.py -f "index_file"
+
+
+Detailed usage - 
+Usage: build_index.py [options]
+
+Options:
+-h, --help            show this help message and exit
+-d DIR_NAME, --directory=DIR_NAME
+directory in which the documents exist
+-b                    store index in a file or not
+-i                    create an index
+-f INDEX_FILE, --index_file=INDEX_FILE
+read index from the file

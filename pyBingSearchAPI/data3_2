@@ -1,0 +1,5 @@
+{'rt_Business': {'rt_Business': 6, 'rt_Entertainment': 2, 'rt_Politics': 2},
+ 'rt_Entertainment': {'rt_Entertainment': 9, 'rt_Politics': 1},
+  'rt_Politics': {'rt_Business': 4, 'rt_Entertainment': 2, 'rt_Politics': 4}}
+  F is 0.633333333333
+
